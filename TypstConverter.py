@@ -132,6 +132,7 @@ class TypstMathPrinter(StrPrinter):
 
     # using ^ but not ** for power
     def _print_Pow(self, expr):
+        # TODO: добавить использование root если степень у выражения дробная (1/n)
         b, e = expr.args
         base = self.doprint(b) if b.is_Atom else "(" + self.doprint(b) + ")"
         if e is sympy.S.Half:
@@ -191,8 +192,8 @@ class TypstMathConverter(object):
         Remove the identifier and its function (if any) from the registry,
         handling both '#' and non-'#' versions.
 
-        Args:
-            name (str): The name of the identifier to remove. Can start with '#'.
+
+        :param name (str): The name of the identifier to remove. Can start with '#'.
         """
         base = name.lstrip("#")
         for key in (base, f"#{base}"):
@@ -272,73 +273,95 @@ class TypstMathConverter(object):
         return self.convert_additive(expr.additive())
 
     def convert_additive(self, additive):
+        """
+        Converts a parser node 'relation' into a Sympy object representing a logical expression (Eq, Ne, Lt, etc.).
+
+        :param relation: A parser node describing the relation.
+        :return: A Sympy expression (sympy.Expr), for instance sympy.Eq(x, y).
+        """
         additive_op = additive.ADDITIVE_OP()
-        if additive_op:
-            additives = additive.additive()
-            assert len(additives) == 2
-            op = additive_op.getText()
 
-            def additive_at(i):
-                return self.convert_additive(additives[i])
-
-            if op == "+":
-                return additive_at(0) + additive_at(1)
-            elif op == "-":
-                return additive_at(0) - additive_at(1)
-            elif op in self.id2type and self.id2type[op] == "ADDITIVE_OP":
-                assert op in self.id2func, f"function for {op} not found"
-                return self.id2func[op](additive)
-            else:
-                raise Exception(f"unknown additive operator {op}")
-        else:
+        if not additive_op:
             return self.convert_mp(additive.mp())
 
+        additives = additive.additive()
+        assert len(additives) == 2
+
+        op = additive_op.getText()
+
+        standard_ops = {"+": lambda a, b: a + b, "-": lambda a, b: a - b}
+
+        if op in standard_ops:
+            return standard_ops[op](
+                self.convert_additive(additives[0]), self.convert_additive(additives[1])
+            )
+
+        if op in self.id2type and self.id2type[op] == "ADDITIVE_OP":
+            assert op in self.id2func, f"function for {op} not found"
+            return self.id2func[op](additive)
+
+        raise Exception(f"unknown additive operator {op}")
+
     def convert_mp(self, mp, is_denominator=False):
+        """
+        Converts a parser node 'mp' (multiplicative expression) into a computed value or a Sympy object.
+
+        :param mp: A parser node describing a multiplicative expression (e.g. a * b, a / b).
+        :param is_denominator: A boolean indicating whether the expression is in the denominator (used for context-specific behavior).
+        :return: The result of evaluating the multiplicative expression.
+        :raises Exception: If the operator is unknown and not registered in 'id2type' and 'id2func'.
+        """
+
         mp_op = mp.MP_OP()
-        if mp_op:
-            mps = mp.mp()
-            assert len(mps) == 2
-            op = mp_op.getText()
 
-            def mp_at(i, is_denominator=False):
-                return self.convert_mp(mps[i], is_denominator=is_denominator)
-
-            if op == "*":
-                return mp_at(0) * mp_at(1)
-            elif op == "/":
-                return mp_at(0) / mp_at(1, True)
-            elif op == "\\/":
-                return mp_at(0) / mp_at(1, True)
-            elif op in self.id2type and self.id2type[op] == "MP_OP":
-                assert op in self.id2func, f"function for {op} not found"
-                return self.id2func[op](mp)
-            else:
-                raise Exception(f"unknown mp operator {op}")
-        else:
+        if not mp_op:
             return self.convert_unary(mp.unary(), is_denominator=is_denominator)
+
+        mps = mp.mp()
+        assert len(mps) == 2
+        op = mp_op.getText()
+
+        def mp_at(i, is_denominator=False):
+            return self.convert_mp(mps[i], is_denominator=is_denominator)
+
+        if op == "*":
+            return mp_at(0) * mp_at(1)
+        elif op == "/":
+            return mp_at(0) / mp_at(1, True)
+        elif op == "\\/":
+            return mp_at(0) / mp_at(1, True)
+
+        if op in self.id2type and self.id2type[op] == "MP_OP":
+            assert op in self.id2func, f"function for {op} not found"
+            return self.id2func[op](mp)
+
+        raise Exception(f"unknown mp operator {op}")
 
     def convert_unary(self, unary, is_denominator=False):
         additive_op = unary.ADDITIVE_OP()
+
         if additive_op:
             unary = unary.unary()
             assert unary
+
             op = additive_op.getText()
             if op == "+":
                 return self.convert_unary(unary, is_denominator=is_denominator)
             elif op == "-":
                 return -self.convert_unary(unary, is_denominator=is_denominator)
-            else:
-                raise Exception(f"unsupport unary operator {op}")
-        else:
-            postfixes = [self.convert_postfix(pos) for pos in unary.postfix()]
-            assert len(postfixes) >= 1
-            if len(postfixes) == 1:
-                return postfixes[0]
-            else:
-                if is_denominator:
-                    return postfixes[0] / reduce(lambda x, y: x * y, postfixes[1:])
-                else:
-                    return reduce(lambda x, y: x * y, postfixes)
+
+            raise Exception(f"unsupport unary operator {op}")
+
+        postfixes = [self.convert_postfix(pos) for pos in unary.postfix()]
+        assert len(postfixes) >= 1
+
+        if len(postfixes) == 1:
+            return postfixes[0]
+
+        if is_denominator:
+            return postfixes[0] / reduce(lambda x, y: x * y, postfixes[1:])
+
+        return reduce(lambda x, y: x * y, postfixes)
 
     def convert_eval_at(self, expr, eval_at):
         # eval_at: EVAL_BAR subsupassign;
@@ -786,4 +809,3 @@ if __name__ == "__main__":
     expr = convertor.sympy("integral_1^2 x^2 dif x")
     typst = convertor.typst(expr)
     assert typst == "integral_1^2 x^2 dif x"
-

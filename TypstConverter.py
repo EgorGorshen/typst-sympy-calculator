@@ -1,60 +1,85 @@
+from functools import reduce, wraps
+from typing import Callable
+
 import sympy
 from sympy.printing.str import StrPrinter
+
 from TypstParser import TypstMathParser
-from functools import wraps, reduce
-from typing import Callable
 
 
 class TypstMathPrinter(StrPrinter):
-
     def paren(self, expr):
-        return '(' + self.doprint(expr) + ')' if expr.is_Add else self.doprint(expr)
+        return "(" + self.doprint(expr) + ")" if expr.is_Add else self.doprint(expr)
 
     def _print_list(self, lst):
         lst = list(set([self.doprint(item) for item in lst]))
         # lst = [self.doprint(item) for item in lst]
-        return '(' + ', '.join(lst) + ')'
+        return "(" + ", ".join(lst) + ")"
 
     def _print_tuple(self, tup):
-        return '(' + ', '.join([self.doprint(item) for item in tup]) + ')'
-    
+        return "(" + ", ".join([self.doprint(item) for item in tup]) + ")"
+
     def _print_dict(self, dic):
         if len(dic) == 0:
-            return 'nothing'
+            return "nothing"
         elif len(dic) == 1:
             k, v = dic.popitem()
-            return self.doprint(k) + ' = ' + self.doprint(v)
+            return self.doprint(k) + " = " + self.doprint(v)
         else:
-            return 'cases(' + ', '.join([self.doprint(k) + ' = ' + self.doprint(v) for k, v in dic.items()]) + ')'
+            return (
+                "cases("
+                + ", ".join(
+                    [self.doprint(k) + " = " + self.doprint(v) for k, v in dic.items()]
+                )
+                + ")"
+            )
 
     def _print_Mul(self, expr):
         def mul(x, y):
-            if x == '1':
+            if x == "1":
                 return y
-            if x == '-1':
-                return '-' + y
-            return x + ' ' + y
+            if x == "-1":
+                return "-" + y
+            return x + " " + y
+
         if len(expr.args) >= 2 and expr.args[0].is_Number:
             num = expr.args[0]
             x = expr.args[1]
             if x.is_Pow and x.args[1].is_Number and x.args[1] < 0:
-                return (reduce(mul, [self.paren(arg) for arg in [num] + list(expr.args[2:])])) + ' / ' + self.paren(sympy.simplify(x ** -1))
+                return (
+                    (
+                        reduce(
+                            mul,
+                            [self.paren(arg) for arg in [num] + list(expr.args[2:])],
+                        )
+                    )
+                    + " / "
+                    + self.paren(sympy.simplify(x**-1))
+                )
             else:
                 return reduce(mul, [self.paren(arg) for arg in expr.args])
         else:
             x = expr.args[0]
             if x.is_Pow and x.args[1].is_Number and x.args[1] < 0:
-                return (reduce(mul, [self.paren(arg) for arg in expr.args[1:]]) if len(expr.args) > 1 else '1') + ' / ' + self.paren(sympy.simplify(x ** -1))
+                return (
+                    (
+                        reduce(mul, [self.paren(arg) for arg in expr.args[1:]])
+                        if len(expr.args) > 1
+                        else "1"
+                    )
+                    + " / "
+                    + self.paren(sympy.simplify(x**-1))
+                )
             else:
                 return reduce(mul, [self.paren(arg) for arg in expr.args])
-    
+
     # matrix form: mat(1, 2; 3, 4)
     def _print_MatrixBase(self, expr):
         n, m, mat_flattern = expr.args
-        res = 'mat('
-        rows = [mat_flattern[i:i+m] for i in range(0, n*m, m)]
-        res += '; '.join(map(lambda row: ', '.join(map(self.doprint, row)), rows))
-        res += ')'
+        res = "mat("
+        rows = [mat_flattern[i : i + m] for i in range(0, n * m, m)]
+        res += "; ".join(map(lambda row: ", ".join(map(self.doprint, row)), rows))
+        res += ")"
         return res
 
     def _print_Limit(self, expr):
@@ -64,17 +89,32 @@ class TypstMathPrinter(StrPrinter):
     def _print_Integral(self, expr):
         e, lims = expr.args
         if len(lims) > 1:
-            return "integral_%s^%s %s dif %s" % (self.paren(lims[1]), self.paren(lims[2]), self._print(e), self._print(lims[0]))
+            return "integral_%s^%s %s dif %s" % (
+                self.paren(lims[1]),
+                self.paren(lims[2]),
+                self._print(e),
+                self._print(lims[0]),
+            )
         else:
             return "integral %s dif %s" % (self._print(e), self._print(lims))
-    
+
     def _print_Sum(self, expr):
         e, lims = expr.args
-        return "sum_(%s = %s)^%s %s" % (self._print(lims[0]), self._print(lims[1]), self.paren(lims[2]), self._print(e))
+        return "sum_(%s = %s)^%s %s" % (
+            self._print(lims[0]),
+            self._print(lims[1]),
+            self.paren(lims[2]),
+            self._print(e),
+        )
 
     def _print_Product(self, expr):
         e, lims = expr.args
-        return "product_(%s = %s)^%s %s" % (self._print(lims[0]), self._print(lims[1]), self.paren(lims[2]), self._print(e))
+        return "product_(%s = %s)^%s %s" % (
+            self._print(lims[0]),
+            self._print(lims[1]),
+            self.paren(lims[2]),
+            self._print(e),
+        )
 
     def _print_factorial(self, expr):
         return "%s!" % self._print(expr.args[0])
@@ -83,7 +123,7 @@ class TypstMathPrinter(StrPrinter):
         e = expr.args[0]
         wrt = expr.args[1]
         return "dif / (dif %s) (%s)" % (self._print(wrt), self._print(e))
-    
+
     def _print_Abs(self, expr):
         return "|%s|" % self._print(expr.args[0])
 
@@ -93,7 +133,7 @@ class TypstMathPrinter(StrPrinter):
     # using ^ but not ** for power
     def _print_Pow(self, expr):
         b, e = expr.args
-        base = self.doprint(b) if b.is_Atom else '(' + self.doprint(b) + ')'
+        base = self.doprint(b) if b.is_Atom else "(" + self.doprint(b) + ")"
         if e is sympy.S.Half:
             return "sqrt(%s)" % self.doprint(b)
         if -e is sympy.S.Half:
@@ -101,22 +141,21 @@ class TypstMathPrinter(StrPrinter):
         if e is -sympy.S.One:
             return "1 / %s" % base
         if e.is_Atom or e.is_Pow:
-            return base + '^' + self.doprint(e)
+            return base + "^" + self.doprint(e)
         else:
-            return base + '^' + '(' + self.doprint(e) + ')'
-    
+            return base + "^" + "(" + self.doprint(e) + ")"
+
     def _print_And(self, expr):
-        return ' and '.join([self.doprint(item) for item in expr.args])
+        return " and ".join([self.doprint(item) for item in expr.args])
 
     def _print_Or(self, expr):
-        return ' or '.join([self.doprint(item) for item in expr.args])
+        return " or ".join([self.doprint(item) for item in expr.args])
 
     def _print_Not(self, expr):
-        return 'not ' + self.doprint(expr.args[0])
+        return "not " + self.doprint(expr.args[0])
 
 
 class TypstMathConverter(object):
-
     id2type = {}
     id2func = {}
 
@@ -124,38 +163,59 @@ class TypstMathConverter(object):
         self.parser = TypstMathParser()
         self.printer = TypstMathPrinter()
 
-    def define(self, name: str, type: str, func: Callable = None):
-        if name.startswith('#'):
-            name = name[1:]
-        self.id2type[name.split('_')[0]] = type
-        if isinstance(func, Callable):
+    def define(self, name: str, type_: str, func: Callable | None = None):
+        """
+        Register a new identifier (function, constant, or operator) with its type and optional implementation.
+
+        WARNING:
+            This method adds both versions of the identifier: with and without the leading '#' symbol,
+            to ensure compatibility with Typst syntax variations. The type of the identifier is stored
+            in `id2type`, and its implementation (if provided) is stored in `id2func`.
+
+        Args:
+            name (str): The name of the identifier to register. Can optionally start with '#'.
+            type_ (str): The type of the identifier (e.g., 'func', 'const', 'diff').
+            func (Callable | None): Optional function implementation associated with this identifier.
+        """
+
+        name = name.lstrip("#")
+        self.id2type[name.split("_")[0]] = type_
+        self.id2type["#" + name.split("_")[0]] = type_
+
+        if func is not None:
             self.id2func[name] = func
-        name = '#' + name
-        self.id2type[name.split('_')[0]] = type
-        if isinstance(func, Callable):
-            self.id2func[name] = func
+            self.id2func["#" + name] = func
 
     def undefine(self, name: str):
-        if name.startswith('#'):
-            name = name[1:]
-        if name in self.id2type:
-            del self.id2type[name]
-        if name in self.id2func:
-            del self.id2func[name]
-        name = '#' + name
-        if name in self.id2type:
-            del self.id2type[name]
-        if name in self.id2func:
-            del self.id2func[name]
+        """
+        Remove the identifier and its function (if any) from the registry,
+        handling both '#' and non-'#' versions.
+
+        Args:
+            name (str): The name of the identifier to remove. Can start with '#'.
+        """
+        base = name.lstrip("#")
+        for key in (base, f"#{base}"):
+            self.id2type.pop(key.split("_")[0], None)
+            self.id2func.pop(key, None)
 
     def define_accent(self, accent_name: str):
-        self.define(accent_name, 'ACCENT_OP')
+        """
+        Register an accent operator (e.g., vector, hat) by name.
+        """
+        self.define(accent_name, "ACCENT_OP")
 
     def define_symbol_base(self, symbol_base_name: str):
-        self.define(symbol_base_name, 'SYMBOL_BASE')
+        """
+        Register a base symbol (e.g., Latin/Greek letter used as a variable).
+        """
+        self.define(symbol_base_name, "SYMBOL_BASE")
 
     def define_function(self, function_name: str):
-        self.define(function_name, 'FUNC')
+        """
+        Register a mathematical function (e.g., sin, log, f).
+        """
+        self.define(function_name, "FUNC")
 
     def parse(self, typst_math: str):
         self.parser.id2type = self.id2type
@@ -163,46 +223,50 @@ class TypstMathConverter(object):
 
     def sympy(self, typst_math: str):
         math = self.parse(typst_math)
-        return self.convert_math(math)
+        return self.convert_relation(math.relation())
 
     def typst(self, sympy_expr) -> str:
         return self.printer.doprint(sympy_expr)
 
-    def convert_math(self, math):
-        return self.convert_relation(math.relation())
-
     def convert_relation(self, relation):
-        relation_op = relation.RELATION_OP()
-        if relation_op:
-            relations = relation.relation()
-            assert len(relations) == 2
-            op = relation_op.getText()
+        """
+        Converts a parser node 'relation' into a Sympy object representing a logical expression (Eq, Ne, Lt, etc.).
 
-            def rel(i):
-                return self.convert_relation(relations[i])
-            if op == '=':
-                return sympy.Eq(rel(0), rel(1))
-            elif op == '==':
-                return sympy.Eq(rel(0), rel(1))
-            elif op == '!=':
-                return sympy.Ne(rel(0), rel(1))
-            elif op == '<':
-                return sympy.Lt(rel(0), rel(1))
-            elif op == '>':
-                return sympy.Gt(rel(0), rel(1))
-            elif op == '<=':
-                return sympy.Le(rel(0), rel(1))
-            elif op == '>=':
-                return sympy.Ge(rel(0), rel(1))
-            elif op in self.id2type and self.id2type[op] == 'RELATION_OP':
-                assert op in self.id2func, f'function for {op} not found'
-                return self.id2func[op](relation)
-            else:
-                raise Exception(f'unknown relation operator {op}')
-        else:
+        :param relation: A parser node describing the relation.
+        :return: A Sympy expression (sympy.Expr), for instance sympy.Eq(x, y).
+        """
+
+        relation_op = relation.RELATION_OP()
+
+        if not relation_op:
             expr = relation.expr()
             assert expr
             return self.convert_expr(expr)
+
+        relations = relation.relation()
+        assert len(relations) == 2
+        op = relation_op.getText()
+
+        standard_ops = {
+            "=": sympy.Eq,
+            "==": sympy.Eq,
+            "!=": sympy.Ne,
+            "<": sympy.Lt,
+            ">": sympy.Gt,
+            "<=": sympy.Le,
+            ">=": sympy.Ge,
+        }
+
+        if op in standard_ops:
+            return standard_ops[op](
+                self.convert_relation(relations[0]), self.convert_relation(relations[1])
+            )
+
+        if op in self.id2type and self.id2type[op] == "RELATION_OP":
+            assert op in self.id2func, f"function for {op} not found"
+            return self.id2func[op](relation)
+
+        raise Exception(f"unknown relation operator {op}")
 
     def convert_expr(self, expr):
         return self.convert_additive(expr.additive())
@@ -216,15 +280,16 @@ class TypstMathConverter(object):
 
             def additive_at(i):
                 return self.convert_additive(additives[i])
-            if op == '+':
+
+            if op == "+":
                 return additive_at(0) + additive_at(1)
-            elif op == '-':
+            elif op == "-":
                 return additive_at(0) - additive_at(1)
-            elif op in self.id2type and self.id2type[op] == 'ADDITIVE_OP':
-                assert op in self.id2func, f'function for {op} not found'
+            elif op in self.id2type and self.id2type[op] == "ADDITIVE_OP":
+                assert op in self.id2func, f"function for {op} not found"
                 return self.id2func[op](additive)
             else:
-                raise Exception(f'unknown additive operator {op}')
+                raise Exception(f"unknown additive operator {op}")
         else:
             return self.convert_mp(additive.mp())
 
@@ -237,17 +302,18 @@ class TypstMathConverter(object):
 
             def mp_at(i, is_denominator=False):
                 return self.convert_mp(mps[i], is_denominator=is_denominator)
-            if op == '*':
+
+            if op == "*":
                 return mp_at(0) * mp_at(1)
-            elif op == '/':
+            elif op == "/":
                 return mp_at(0) / mp_at(1, True)
-            elif op == '\\/':
+            elif op == "\\/":
                 return mp_at(0) / mp_at(1, True)
-            elif op in self.id2type and self.id2type[op] == 'MP_OP':
-                assert op in self.id2func, f'function for {op} not found'
+            elif op in self.id2type and self.id2type[op] == "MP_OP":
+                assert op in self.id2func, f"function for {op} not found"
                 return self.id2func[op](mp)
             else:
-                raise Exception(f'unknown mp operator {op}')
+                raise Exception(f"unknown mp operator {op}")
         else:
             return self.convert_unary(mp.unary(), is_denominator=is_denominator)
 
@@ -257,12 +323,12 @@ class TypstMathConverter(object):
             unary = unary.unary()
             assert unary
             op = additive_op.getText()
-            if op == '+':
+            if op == "+":
                 return self.convert_unary(unary, is_denominator=is_denominator)
-            elif op == '-':
+            elif op == "-":
                 return -self.convert_unary(unary, is_denominator=is_denominator)
             else:
-                raise Exception(f'unsupport unary operator {op}')
+                raise Exception(f"unsupport unary operator {op}")
         else:
             postfixes = [self.convert_postfix(pos) for pos in unary.postfix()]
             assert len(postfixes) >= 1
@@ -270,10 +336,10 @@ class TypstMathConverter(object):
                 return postfixes[0]
             else:
                 if is_denominator:
-                    return  postfixes[0] / reduce(lambda x, y: x * y, postfixes[1:])
+                    return postfixes[0] / reduce(lambda x, y: x * y, postfixes[1:])
                 else:
                     return reduce(lambda x, y: x * y, postfixes)
-    
+
     def convert_eval_at(self, expr, eval_at):
         # eval_at: EVAL_BAR subsupassign;
         symbol, sub, sup = self.convert_subsupassign(eval_at.subsupassign())
@@ -298,19 +364,18 @@ class TypstMathConverter(object):
                 result = sympy.transpose(result)
             elif postfix_op.POSTFIX_OP():
                 op = postfix_op.POSTFIX_OP().getText()
-                if op == '!':
+                if op == "!":
                     result = sympy.factorial(result)
-                elif op == '%':
+                elif op == "%":
                     result = result / 100
-                elif op in self.id2type and self.id2type[op] == 'POSTFIX_OP':
-                    assert op in self.id2func, f'function for {op} not found'
+                elif op in self.id2type and self.id2type[op] == "POSTFIX_OP":
+                    assert op in self.id2func, f"function for {op} not found"
                     # unsupport ast function
                     result = self.id2func[op](result)
                 else:
-                    raise Exception(f'unknown postfix operator {op}')
+                    raise Exception(f"unknown postfix operator {op}")
             else:
-                raise Exception(
-                    f'unknown postfix operator {postfix_op.getText()}')
+                raise Exception(f"unknown postfix operator {postfix_op.getText()}")
         return result
 
     def convert_exp(self, exp):
@@ -360,12 +425,12 @@ class TypstMathConverter(object):
         if func.subargs():
             subargs = func.subargs().getText()
         else:
-            subargs = ''
+            subargs = ""
         func_name = func_base_name + subargs
         supexpr = None
         if func.supexpr():
             supexpr = self.convert_supexpr(func.supexpr())
-        if func_base_name in self.id2type and self.id2type[func_base_name] == 'FUNC':
+        if func_base_name in self.id2type and self.id2type[func_base_name] == "FUNC":
             if func_name in self.id2func:
                 if supexpr:
                     return self.id2func[func_name](func) ** supexpr
@@ -374,8 +439,7 @@ class TypstMathConverter(object):
             else:
                 func_args = func.args()
                 if func_args:
-                    args = [self.convert_relation(
-                        arg) for arg in func_args.relation()]
+                    args = [self.convert_relation(arg) for arg in func_args.relation()]
                 else:
                     args = [self.convert_mp(func.mp())]
                 if supexpr:
@@ -383,16 +447,16 @@ class TypstMathConverter(object):
                 else:
                     return sympy.Function(func_name)(*args)
         else:
-            raise Exception(f'unknown function {func_name}')
+            raise Exception(f"unknown function {func_name}")
 
     def convert_matrix(self, matrix):
         func_name = matrix.FUNC_MAT().getText()
-        if func_name in self.id2type and self.id2type[func_name] == 'FUNC_MAT':
-            assert func_name in self.id2func, f'function for {func_name} not found'
+        if func_name in self.id2type and self.id2type[func_name] == "FUNC_MAT":
+            assert func_name in self.id2func, f"function for {func_name} not found"
             return self.id2func[func_name](matrix)
         else:
-            raise Exception(f'unknown matrix function {func_name}')
-        
+            raise Exception(f"unknown matrix function {func_name}")
+
     def convert_subassign(self, subassign):
         if subassign.atom():
             return None, self.convert_atom(subassign.atom())
@@ -403,7 +467,7 @@ class TypstMathConverter(object):
             rel = self.convert_relation(subassign.relation())
             assert isinstance(rel, sympy.Equality)
             return rel.lhs, rel.rhs
-        
+
     def convert_supassign(self, supassign):
         if supassign.exp():
             return None, self.convert_exp(supassign.exp())
@@ -412,9 +476,11 @@ class TypstMathConverter(object):
         elif supassign.relation():
             rel = self.convert_relation(supassign.relation())
             assert isinstance(rel, sympy.Equality)
-            assert isinstance(rel.lhs, sympy.Symbol), f'lhs of {supassign.relation().getText()} is not a symbol'
+            assert isinstance(rel.lhs, sympy.Symbol), (
+                f"lhs of {supassign.relation().getText()} is not a symbol"
+            )
             return rel.lhs, rel.rhs
-    
+
     def convert_subsupassign(self, subsupassign):
         symbol = None
         sub = None
@@ -435,11 +501,11 @@ class TypstMathConverter(object):
 
     def convert_reduceit(self, reduceit):
         reduce_name = reduceit.REDUCE_OP().getText()
-        if reduce_name in self.id2type and self.id2type[reduce_name] == 'REDUCE_OP':
-            assert reduce_name in self.id2func, f'function for {reduce_name} not found'
+        if reduce_name in self.id2type and self.id2type[reduce_name] == "REDUCE_OP":
+            assert reduce_name in self.id2func, f"function for {reduce_name} not found"
             return self.id2func[reduce_name](reduceit)
         else:
-            raise Exception(f'unknown reduce function {reduce_name}')
+            raise Exception(f"unknown reduce function {reduce_name}")
 
     def convert_lim(self, lim):
         symbol = self.convert_symbol(lim.symbol())
@@ -480,7 +546,7 @@ class TypstMathConverter(object):
         elif subexpr.expr():
             return self.convert_expr(subexpr.expr())
         else:
-            raise Exception(f'unknown subexpr {subexpr.getText()}')
+            raise Exception(f"unknown subexpr {subexpr.getText()}")
 
     def convert_supexpr(self, supexpr):
         if supexpr.exp():
@@ -488,7 +554,7 @@ class TypstMathConverter(object):
         elif supexpr.expr():
             return self.convert_expr(supexpr.expr())
         else:
-            raise Exception(f'unknown supexpr {supexpr.getText()}')
+            raise Exception(f"unknown supexpr {supexpr.getText()}")
 
     def convert_atom(self, atom):
         if atom.NUMBER():
@@ -497,7 +563,7 @@ class TypstMathConverter(object):
         elif atom.symbol():
             return self.convert_symbol(atom.symbol())
         else:
-            raise Exception(f'unknown atom {atom.getText()}')
+            raise Exception(f"unknown atom {atom.getText()}")
 
     def convert_symbol(self, symbol):
         symbol_name = symbol.getText()
@@ -508,9 +574,10 @@ class TypstMathConverter(object):
             return sympy.Symbol(symbol_name)
 
     def get_decorators(env):
-
         class operator(object):
-            def __init__(self, type: str, convert_ast: Callable, name: str = None, ast=False):
+            def __init__(
+                self, type: str, convert_ast: Callable, name: str = None, ast=False
+            ):
                 self.type = type
                 self.convert_ast = convert_ast
                 self.name = name
@@ -522,10 +589,11 @@ class TypstMathConverter(object):
                 assert isinstance(func, Callable)
                 if self.name is None:
                     name = func.__name__
-                    assert name.startswith(
-                        'convert_'), f'function name "{name}" should start with "convert_"'
-                    assert len(name) > len('convert_')
-                    self.name = name[len('convert_'):].replace('_dot_', '.')
+                    assert name.startswith("convert_"), (
+                        f'function name "{name}" should start with "convert_"'
+                    )
+                    assert len(name) > len("convert_")
+                    self.name = name[len("convert_") :].replace("_dot_", ".")
                 if self.ast:
                     self.func = func
                 else:
@@ -534,83 +602,95 @@ class TypstMathConverter(object):
                     def ast_func(*args, **kwargs):
                         args, kwargs = self.convert_ast(*args, **kwargs)
                         return func(*args, **kwargs)
+
                     self.func = ast_func
                     # save to env
                     self.env.define(self.name, self.type, self.func)
                 return self.func
 
             def __repr__(self):
-                return f'{self.type}(name = {self.name}, ast = {self.ast})'
+                return f"{self.type}(name = {self.name}, ast = {self.ast})"
 
         class relation_op(operator):
-
             def __init__(self, name: str = None, ast=False):
                 def convert_ast(relation):
-                    return [self.env.convert_relation(relation) for relation in relation.relation()], {}
-                super().__init__('RELATION_OP', convert_ast, name, ast)
+                    return [
+                        self.env.convert_relation(relation)
+                        for relation in relation.relation()
+                    ], {}
+
+                super().__init__("RELATION_OP", convert_ast, name, ast)
 
         class additive_op(operator):
-
             def __init__(self, name: str = None, ast=False):
                 def convert_ast(additive):
-                    return [self.env.convert_additive(additive) for additive in additive.additive()], {}
-                super().__init__('ADDITIVE_OP', convert_ast, name, ast)
+                    return [
+                        self.env.convert_additive(additive)
+                        for additive in additive.additive()
+                    ], {}
+
+                super().__init__("ADDITIVE_OP", convert_ast, name, ast)
 
         class mp_op(operator):
-
             def __init__(self, name: str = None, ast=False):
                 def convert_ast(mp):
                     return [self.env.convert_mp(mp) for mp in mp.mp()], {}
-                super().__init__('MP_OP', convert_ast, name, ast)
+
+                super().__init__("MP_OP", convert_ast, name, ast)
 
         class postfix_op(operator):
-
             def __init__(self, name: str = None, ast=False):
                 # unsupported ast so do nothing
                 def convert_ast(result):
                     return [result], {}
-                super().__init__('POSTFIX_OP', convert_ast, name, ast)
+
+                super().__init__("POSTFIX_OP", convert_ast, name, ast)
 
         class reduce_op(operator):
-
             def __init__(self, name: str = None, ast=False):
                 def convert_ast(reduceit):
                     # reduceit: REDUCE_OP subsupassign mp;
-                    symbol, sub, sup = self.env.convert_subsupassign(reduceit.subsupassign())
+                    symbol, sub, sup = self.env.convert_subsupassign(
+                        reduceit.subsupassign()
+                    )
                     assert sub is not None and sup is not None
                     mp = self.env.convert_mp(reduceit.mp())
                     if symbol is None:
                         # get the first symbol in mp
                         symbol = mp.free_symbols.pop()
                     return [mp, (symbol, sub, sup)], {}
-                super().__init__('REDUCE_OP', convert_ast, name, ast)
+
+                super().__init__("REDUCE_OP", convert_ast, name, ast)
 
         class func(operator):
-
             def __init__(self, name: str = None, ast=False):
                 def convert_ast(func):
                     func_args = func.args()
                     if func_args:
-                        args = [self.env.convert_relation(
-                            arg) for arg in func_args.relation()]
+                        args = [
+                            self.env.convert_relation(arg)
+                            for arg in func_args.relation()
+                        ]
                     else:
                         args = [self.env.convert_mp(func.mp())]
                     return args, {}
-                super().__init__('FUNC', convert_ast, name, ast)
+
+                super().__init__("FUNC", convert_ast, name, ast)
 
         class func_mat(operator):
-
             def __init__(self, name: str = None, ast=False):
                 def convert_ast(matrix):
-                    mat = [[self.env.convert_relation(
-                        arg) for arg in args.relation()] for args in matrix.mat_args().args()]
+                    mat = [
+                        [self.env.convert_relation(arg) for arg in args.relation()]
+                        for args in matrix.mat_args().args()
+                    ]
                     return [mat], {}
-                super().__init__('FUNC_MAT', convert_ast, name, ast)
+
+                super().__init__("FUNC_MAT", convert_ast, name, ast)
 
         class constant:
-
             def __init__(self, name: str = None, ast=False):
-                self.type = 'CONSTANT'
+                self.type = "CONSTANT"
                 self.name = name
                 self.func = None
                 self.env = env
@@ -619,24 +699,45 @@ class TypstMathConverter(object):
                 assert isinstance(func, Callable)
                 if self.name is None:
                     name = func.__name__
-                    assert name.startswith(
-                        'convert_'), f'function name "{name}" should start with "convert_"'
-                    assert len(name) > len('convert_')
-                    self.name = name[len('convert_'):].replace('_dot_', '.')
+                    assert name.startswith("convert_"), (
+                        f'function name "{name}" should start with "convert_"'
+                    )
+                    assert len(name) > len("convert_")
+                    self.name = name[len("convert_") :].replace("_dot_", ".")
                 self.func = func
-                self.env.define_symbol_base(self.name.split('_')[0])
+                self.env.define_symbol_base(self.name.split("_")[0])
                 self.env.id2func[self.name] = self.func
                 return self.func
 
             def __repr__(self):
-                return f'{self.type}(name = {self.name})'
+                return f"{self.type}(name = {self.name})"
 
-        return operator, relation_op, additive_op, mp_op, postfix_op, reduce_op, func, func_mat, constant
+        return (
+            operator,
+            relation_op,
+            additive_op,
+            mp_op,
+            postfix_op,
+            reduce_op,
+            func,
+            func_mat,
+            constant,
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     convertor = TypstMathConverter()
-    operator, relation_op, additive_op, mp_op, postfix_op, reduce_op, func, func_mat, constant = convertor.get_decorators()
+    (
+        operator,
+        relation_op,
+        additive_op,
+        mp_op,
+        postfix_op,
+        reduce_op,
+        func,
+        func_mat,
+        constant,
+    ) = convertor.get_decorators()
 
     @func()
     def convert_sin(x):
@@ -645,43 +746,44 @@ if __name__ == '__main__':
     @func_mat()
     def convert_mat(mat):
         return sympy.matrices.Matrix(mat)
-    
-    convertor.define_symbol_base('x')
-    convertor.define_symbol_base('y')
-    convertor.define_symbol_base('z')
-    expr = convertor.sympy('1 + sin^2 1/2 + x + 1')
+
+    convertor.define_symbol_base("x")
+    convertor.define_symbol_base("y")
+    convertor.define_symbol_base("z")
+    expr = convertor.sympy("1 + sin^2 1/2 + x + 1")
     typst = convertor.typst(sympy.simplify(expr))
-    assert typst == 'x + (sin(1/2))^2 + 2'
+    assert typst == "x + (sin(1/2))^2 + 2"
 
-    expr = convertor.sympy('(x y)^y^(z+1)')
+    expr = convertor.sympy("(x y)^y^(z+1)")
     typst = convertor.typst(sympy.simplify(expr))
-    assert typst == '(x y)^y^(z + 1)'
+    assert typst == "(x y)^y^(z + 1)"
 
-    expr = convertor.sympy('mat(x + y, 2; z, 4)')
+    expr = convertor.sympy("mat(x + y, 2; z, 4)")
     typst = convertor.typst(sympy.simplify(expr))
-    assert typst == 'mat(x + y, 2; z, 4)'
+    assert typst == "mat(x + y, 2; z, 4)"
 
-    convertor.define_function('f_1')
-    expr = convertor.sympy('f_1^2(1) + f_1(1)')
+    convertor.define_function("f_1")
+    expr = convertor.sympy("f_1^2(1) + f_1(1)")
     typst = convertor.typst(sympy.simplify(expr))
-    assert typst == '(f_1(1) + 1) f_1(1)'
+    assert typst == "(f_1(1) + 1) f_1(1)"
 
-    expr = convertor.sympy('x * y * z')
+    expr = convertor.sympy("x * y * z")
     typst = convertor.typst(expr)
-    assert typst == 'x y z'
+    assert typst == "x y z"
 
-    expr = convertor.sympy('(x + 1) * y * z')
+    expr = convertor.sympy("(x + 1) * y * z")
     typst = convertor.typst(expr)
-    assert typst == 'y z (x + 1)'
+    assert typst == "y z (x + 1)"
 
-    expr = convertor.sympy('(x + 1) * y^(1/2)')
+    expr = convertor.sympy("(x + 1) * y^(1/2)")
     typst = convertor.typst(expr)
-    assert typst == 'sqrt(y) (x + 1)'
+    assert typst == "sqrt(y) (x + 1)"
 
-    expr = convertor.sympy('|x|')
+    expr = convertor.sympy("|x|")
     typst = convertor.typst(expr)
-    assert typst == '|x|'
+    assert typst == "|x|"
 
-    expr = convertor.sympy('integral_1^2 x^2 dif x')
+    expr = convertor.sympy("integral_1^2 x^2 dif x")
     typst = convertor.typst(expr)
-    assert typst == 'integral_1^2 x^2 dif x'
+    assert typst == "integral_1^2 x^2 dif x"
+

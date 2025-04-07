@@ -1,3 +1,4 @@
+import math
 from functools import reduce, wraps
 from typing import Callable
 
@@ -11,25 +12,25 @@ class TypstMathPrinter(StrPrinter):
     def paren(self, expr):
         return "(" + self.doprint(expr) + ")" if expr.is_Add else self.doprint(expr)
 
-    def _print_list(self, lst):
-        lst = list(set([self.doprint(item) for item in lst]))
+    def _print_list(self, expr):
+        expr = list(set([self.doprint(item) for item in expr]))
         # lst = [self.doprint(item) for item in lst]
-        return "(" + ", ".join(lst) + ")"
+        return "(" + ", ".join(expr) + ")"
 
-    def _print_tuple(self, tup):
-        return "(" + ", ".join([self.doprint(item) for item in tup]) + ")"
+    def _print_tuple(self, expr):
+        return "(" + ", ".join([self.doprint(item) for item in expr]) + ")"
 
-    def _print_dict(self, dic):
-        if len(dic) == 0:
+    def _print_dict(self, d):
+        if len(d) == 0:
             return "nothing"
-        elif len(dic) == 1:
-            k, v = dic.popitem()
+        elif len(d) == 1:
+            k, v = d.popitem()
             return self.doprint(k) + " = " + self.doprint(v)
         else:
             return (
                 "cases("
                 + ", ".join(
-                    [self.doprint(k) + " = " + self.doprint(v) for k, v in dic.items()]
+                    [self.doprint(k) + " = " + self.doprint(v) for k, v in d.items()]
                 )
                 + ")"
             )
@@ -173,10 +174,9 @@ class TypstMathConverter(object):
             to ensure compatibility with Typst syntax variations. The type of the identifier is stored
             in `id2type`, and its implementation (if provided) is stored in `id2func`.
 
-        Args:
-            name (str): The name of the identifier to register. Can optionally start with '#'.
-            type_ (str): The type of the identifier (e.g., 'func', 'const', 'diff').
-            func (Callable | None): Optional function implementation associated with this identifier.
+        :param name (str): The name of the identifier to register. Can optionally start with '#'.
+        :param type_ (str): The type of the identifier (e.g., 'func', 'const', 'diff').
+        :param func (Callable | None): Optional function implementation associated with this identifier.
         """
 
         name = name.lstrip("#")
@@ -274,10 +274,15 @@ class TypstMathConverter(object):
 
     def convert_additive(self, additive):
         """
-        Converts a parser node 'relation' into a Sympy object representing a logical expression (Eq, Ne, Lt, etc.).
+        Converts an additive expression into a SymPy expression.
 
-        :param relation: A parser node describing the relation.
-        :return: A Sympy expression (sympy.Expr), for instance sympy.Eq(x, y).
+        Handles standard operations like '+' and '-', as well as user-defined additive operators
+        registered in 'id2type' and 'id2func'. Falls back to a multiplicative expression if no
+        additive operator is present.
+
+        :param additive: Parser node representing an additive expression (e.g., a + b, a - b).
+        :return: A SymPy expression representing the result of the additive operation.
+        :raises Exception: If the operator is unknown or unregistered.
         """
         additive_op = additive.ADDITIVE_OP()
 
@@ -338,42 +343,61 @@ class TypstMathConverter(object):
         raise Exception(f"unknown mp operator {op}")
 
     def convert_unary(self, unary, is_denominator=False):
+        """
+        Converts a parser node 'unary' into a computed value or a SymPy object.
+
+        :param unary: A parser node representing a unary expression, which may include a leading '+' or '-' operator,
+                      or a sequence of postfix expressions.
+        :param is_denominator: A boolean indicating whether the expression is part of a denominator (affects evaluation order).
+        :return: The result of evaluating the unary expression, as a numeric value or a SymPy object.
+        :raises Exception: If the unary operator is unsupported.
+        """
+
         additive_op = unary.ADDITIVE_OP()
 
-        if additive_op:
-            unary = unary.unary()
-            assert unary
+        if not additive_op:
+            postfixes = [self.convert_postfix(pos) for pos in unary.postfix()]
+            assert len(postfixes) != 0
 
-            op = additive_op.getText()
-            if op == "+":
-                return self.convert_unary(unary, is_denominator=is_denominator)
-            elif op == "-":
-                return -self.convert_unary(unary, is_denominator=is_denominator)
+            if not is_denominator:
+                return math.prod(postfixes)
 
-            raise Exception(f"unsupport unary operator {op}")
+            return postfixes[0] / math.prod(postfixes[1:])
 
-        postfixes = [self.convert_postfix(pos) for pos in unary.postfix()]
-        assert len(postfixes) >= 1
+        unary = unary.unary()
+        assert unary
 
-        if len(postfixes) == 1:
-            return postfixes[0]
+        op = additive_op.getText()
 
-        if is_denominator:
-            return postfixes[0] / reduce(lambda x, y: x * y, postfixes[1:])
+        if op == "+":
+            return self.convert_unary(unary, is_denominator=is_denominator)
+        elif op == "-":
+            return -self.convert_unary(unary, is_denominator=is_denominator)
 
-        return reduce(lambda x, y: x * y, postfixes)
+        raise Exception(f"unsupport unary operator {op}")
 
     def convert_eval_at(self, expr, eval_at):
-        # eval_at: EVAL_BAR subsupassign;
+        """
+        Evaluates a symbolic expression at a given point or over a range, using eval bar notation.
+
+        :param expr: SymPy expression to evaluate.
+        :param eval_at: Parser node representing evaluation bounds (e.g. |_{x=1}^{2}).
+        :return: expr(sup) - expr(sub), or expr(val) if only one bound is provided.
+        :raises ValueError: If no bounds are provided.
+        """
         symbol, sub, sup = self.convert_subsupassign(eval_at.subsupassign())
+        symbol = symbol or next(iter(expr.free_symbols), None)
+
         if symbol is None:
-            symbol = expr.free_symbols.pop()
-        assert sub or sup
+            raise ValueError("Cannot determine the symbol to evaluate at.")
+
+        if sub is None and sup is None:
+            raise ValueError("At least one of sub or sup must be specified.")
+
         if sub is None or sup is None:
-            val = sub or sup
-            return expr.subs(symbol, val)
-        else:
-            return expr.subs(symbol, sup) - expr.subs(symbol, sub)
+            return expr.subs(symbol, sub or sup)
+
+        return expr.subs(symbol, sup) - expr.subs(symbol, sub)
 
     def convert_postfix(self, postfix):
         exp = postfix.exp()
@@ -390,7 +414,7 @@ class TypstMathConverter(object):
                 if op == "!":
                     result = sympy.factorial(result)
                 elif op == "%":
-                    result = result / 100
+                    result /= 100
                 elif op in self.id2type and self.id2type[op] == "POSTFIX_OP":
                     assert op in self.id2func, f"function for {op} not found"
                     # unsupport ast function
@@ -402,40 +426,44 @@ class TypstMathConverter(object):
         return result
 
     def convert_exp(self, exp):
+        """
+        Converts an expression node with optional superscript into a SymPy expression.
+
+        :param exp: Parser node representing a base expression, optionally raised to a power (e.g., a^b).
+        :return: A SymPy expression representing the parsed mathematical expression.
+        :raises AssertionError: If the base component (comp) is missing.
+        """
         comp = exp.comp()
         assert comp
-        supexpr = exp.supexpr()
-        if supexpr:
+        if supexpr := exp.supexpr():
             return self.convert_comp(comp) ** self.convert_supexpr(supexpr)
-        else:
-            return self.convert_comp(comp)
-
-    def convert_supexpr(self, supexpr):
-        exp = supexpr.exp()
-        if exp:
-            return self.convert_exp(exp)
-        else:
-            return self.convert_expr(supexpr.expr())
+        return self.convert_comp(comp)
 
     def convert_comp(self, comp):
-        if comp.group():
-            return self.convert_group(comp.group())
-        elif comp.abs_group():
-            return self.convert_abs_group(comp.abs_group())
-        elif comp.func():
-            return self.convert_func(comp.func())
-        elif comp.matrix():
-            return self.convert_matrix(comp.matrix())
-        elif comp.reduceit():
-            return self.convert_reduceit(comp.reduceit())
-        elif comp.lim():
-            return self.convert_lim(comp.lim())
-        elif comp.log():
-            return self.convert_log(comp.log())
-        elif comp.integral():
-            return self.convert_integral(comp.integral())
-        elif comp.atom():
-            return self.convert_atom(comp.atom())
+        """
+        Converts a component node into a SymPy expression by dispatching to the appropriate handler.
+
+        The function checks the type of the component (e.g., group, function, matrix, etc.)
+        and passes it to the corresponding converter method.
+
+        :param comp: Parser node representing a mathematical component.
+        :return: A SymPy expression matching the structure of the component.
+        """
+        converters = [
+            ("group", self.convert_group),
+            ("abs_group", self.convert_abs_group),
+            ("func", self.convert_func),
+            ("matrix", self.convert_matrix),
+            ("reduceit", self.convert_reduceit),
+            ("lim", self.convert_lim),
+            ("log", self.convert_log),
+            ("integral", self.convert_integral),
+            ("atom", self.convert_atom),
+        ]
+
+        for attr, handler in converters:
+            if value := getattr(comp, attr)():
+                return handler(value)
 
     def convert_group(self, group):
         return self.convert_expr(group.expr())
@@ -444,41 +472,48 @@ class TypstMathConverter(object):
         return sympy.Abs(self.convert_expr(abs_group.expr()))
 
     def convert_func(self, func):
+        """
+        Converts a function node from the parser into a Sympy expression.
+
+        :param func: A parser node representing a function call.
+        :return: A Sympy expression representing the function, optionally raised to a power.
+        """
         func_base_name = func.FUNC().getText()
-        if func.subargs():
-            subargs = func.subargs().getText()
+        subargs = func.subargs().getText() if func.subargs() else ""
+        func_name = f"{func_base_name}{subargs}"
+
+        supexpr = self.convert_supexpr(func.supexpr()) if func.supexpr() else None
+
+        if not (self.id2type.get(func_base_name) == "FUNC"):
+            raise ValueError(f"Unknown function type: {func_name}")
+
+        args = (
+            [self.convert_relation(arg) for arg in func.args().relation()]
+            if func.args()
+            else [self.convert_mp(func.mp())]
+        )
+
+        if registered_func := self.id2func.get(func_name):
+            result = registered_func(func)
         else:
-            subargs = ""
-        func_name = func_base_name + subargs
-        supexpr = None
-        if func.supexpr():
-            supexpr = self.convert_supexpr(func.supexpr())
-        if func_base_name in self.id2type and self.id2type[func_base_name] == "FUNC":
-            if func_name in self.id2func:
-                if supexpr:
-                    return self.id2func[func_name](func) ** supexpr
-                else:
-                    return self.id2func[func_name](func)
-            else:
-                func_args = func.args()
-                if func_args:
-                    args = [self.convert_relation(arg) for arg in func_args.relation()]
-                else:
-                    args = [self.convert_mp(func.mp())]
-                if supexpr:
-                    return sympy.Function(func_name)(*args) ** supexpr
-                else:
-                    return sympy.Function(func_name)(*args)
-        else:
-            raise Exception(f"unknown function {func_name}")
+            result = sympy.Function(func_name)(*args)
+
+        return result**supexpr if supexpr else result
 
     def convert_matrix(self, matrix):
+        """
+        Converts a matrix function node from the parser into a Sympy object,
+        using a registered handler if available.
+
+        :param matrix: A parser node representing a matrix function.
+        :return: A Sympy object or result of a registered matrix function.
+        :raises Exception: If the matrix function is not recognized or not registered.
+        """
         func_name = matrix.FUNC_MAT().getText()
         if func_name in self.id2type and self.id2type[func_name] == "FUNC_MAT":
             assert func_name in self.id2func, f"function for {func_name} not found"
             return self.id2func[func_name](matrix)
-        else:
-            raise Exception(f"unknown matrix function {func_name}")
+        raise Exception(f"unknown matrix function {func_name}")
 
     def convert_subassign(self, subassign):
         if subassign.atom():
@@ -564,29 +599,26 @@ class TypstMathConverter(object):
         return subexpr, supexpr
 
     def convert_subexpr(self, subexpr):
-        if subexpr.atom():
-            return self.convert_atom(subexpr.atom())
-        elif subexpr.expr():
-            return self.convert_expr(subexpr.expr())
-        else:
-            raise Exception(f"unknown subexpr {subexpr.getText()}")
+        if atom := subexpr.atom():
+            return self.convert_atom(atom)
+        if expr := subexpr.expr():
+            return self.convert_expr(expr)
+        raise Exception(f"unknown subexpr {subexpr.getText()}")
 
     def convert_supexpr(self, supexpr):
-        if supexpr.exp():
-            return self.convert_exp(supexpr.exp())
-        elif supexpr.expr():
-            return self.convert_expr(supexpr.expr())
-        else:
-            raise Exception(f"unknown supexpr {supexpr.getText()}")
+        if exp := supexpr.exp():
+            return self.convert_exp(exp)
+        if expr := supexpr.expr():
+            return self.convert_expr(expr)
+        raise Exception(f"unknown supexpr {supexpr.getText()}")
 
     def convert_atom(self, atom):
-        if atom.NUMBER():
-            # convert to a rational number but not a float
-            return sympy.Rational(atom.NUMBER().getText())
-        elif atom.symbol():
-            return self.convert_symbol(atom.symbol())
-        else:
-            raise Exception(f"unknown atom {atom.getText()}")
+        if num := atom.NUMBER():
+            return sympy.Rational(num.getText())
+        if sym := atom.symbol():
+            return self.convert_symbol(sym)
+
+        raise Exception(f"unknown atom {atom.getText()}")
 
     def convert_symbol(self, symbol):
         symbol_name = symbol.getText()
@@ -776,36 +808,45 @@ if __name__ == "__main__":
     expr = convertor.sympy("1 + sin^2 1/2 + x + 1")
     typst = convertor.typst(sympy.simplify(expr))
     assert typst == "x + (sin(1/2))^2 + 2"
+    print("PASS")
 
     expr = convertor.sympy("(x y)^y^(z+1)")
     typst = convertor.typst(sympy.simplify(expr))
     assert typst == "(x y)^y^(z + 1)"
+    print("PASS")
 
     expr = convertor.sympy("mat(x + y, 2; z, 4)")
     typst = convertor.typst(sympy.simplify(expr))
     assert typst == "mat(x + y, 2; z, 4)"
+    print("PASS")
 
     convertor.define_function("f_1")
     expr = convertor.sympy("f_1^2(1) + f_1(1)")
     typst = convertor.typst(sympy.simplify(expr))
     assert typst == "(f_1(1) + 1) f_1(1)"
+    print("PASS")
 
     expr = convertor.sympy("x * y * z")
     typst = convertor.typst(expr)
     assert typst == "x y z"
+    print("PASS")
 
     expr = convertor.sympy("(x + 1) * y * z")
     typst = convertor.typst(expr)
     assert typst == "y z (x + 1)"
+    print("PASS")
 
     expr = convertor.sympy("(x + 1) * y^(1/2)")
     typst = convertor.typst(expr)
     assert typst == "sqrt(y) (x + 1)"
+    print("PASS")
 
     expr = convertor.sympy("|x|")
     typst = convertor.typst(expr)
     assert typst == "|x|"
+    print("PASS")
 
     expr = convertor.sympy("integral_1^2 x^2 dif x")
     typst = convertor.typst(expr)
     assert typst == "integral_1^2 x^2 dif x"
+    print("PASS")

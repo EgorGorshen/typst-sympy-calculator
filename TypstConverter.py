@@ -331,9 +331,11 @@ class TypstMathConverter(object):
 
         if op == "*":
             return mp_at(0) * mp_at(1)
-        elif op == "/":
+
+        if op == "/":
             return mp_at(0) / mp_at(1, True)
-        elif op == "\\/":
+
+        if op == "\\/":
             return mp_at(0) / mp_at(1, True)
 
         if op in self.id2type and self.id2type[op] == "MP_OP":
@@ -400,30 +402,74 @@ class TypstMathConverter(object):
         return expr.subs(symbol, sup) - expr.subs(symbol, sub)
 
     def convert_postfix(self, postfix):
-        exp = postfix.exp()
-        assert exp
+        """
+        Processes postfix operators (transpose, factorial, eval@, custom) for a parsed expression.
+
+        :param postfix: ANTLR parse tree node containing:
+                        - exp(): Base expression
+                        - postfix_op(): List of postfix operations
+        :return: sympy.Expr with applied postfix operations
+        :raises ValueError: If base expression is missing
+        :raises KeyError: For unregistered custom operators
+        :raises RuntimeError: For unsupported postfix operations
+        """
+        if not (exp := postfix.exp()):
+            raise ValueError("Postfix expression requires base (e.g., 'x^T')")
+
         result = self.convert_exp(exp)
-        postfix_ops = postfix.postfix_op()
-        for postfix_op in postfix_ops:
-            if postfix_op.eval_at():
-                result = self.convert_eval_at(result, postfix_op.eval_at())
-            elif postfix_op.transpose():
-                result = sympy.transpose(result)
-            elif postfix_op.POSTFIX_OP():
-                op = postfix_op.POSTFIX_OP().getText()
-                if op == "!":
-                    result = sympy.factorial(result)
-                elif op == "%":
-                    result /= 100
-                elif op in self.id2type and self.id2type[op] == "POSTFIX_OP":
-                    assert op in self.id2func, f"function for {op} not found"
-                    # unsupport ast function
-                    result = self.id2func[op](result)
-                else:
-                    raise Exception(f"unknown postfix operator {op}")
-            else:
-                raise Exception(f"unknown postfix operator {postfix_op.getText()}")
+
+        # Optimization: precompute list of postfix operators
+        for op_node in postfix.postfix_op() or []:
+            result = self._apply_postfix_op(result, op_node)
+
         return result
+
+    def _apply_postfix_op(self, expr, op_node):
+        """
+        Applies a single postfix operator to an expression.
+
+        :param expr: sympy.Expr to modify
+        :param op_node: ANTLR operator node containing:
+                        - eval_at()
+                        - transpose()
+                        - POSTFIX_OP()
+        :return: Modified sympy.Expr
+        :raises RuntimeError: For unrecognized operator nodes
+        """
+        if eval_at := op_node.eval_at():
+            return self.convert_eval_at(expr, eval_at)
+        if op_node.transpose():
+            return sympy.transpose(expr)
+
+        if not (op := op_node.POSTFIX_OP()):
+            raise RuntimeError(f"Unsupported postfix node: {op_node.getText()}")
+
+        return self._get_postfix_handler(op.getText())(expr)
+
+    def _get_postfix_handler(self, op: str) -> Callable:
+        """
+        Retrieves handler function for a postfix operator.
+
+        :param op: Operator symbol (e.g., '!', '%', custom)
+        :return: Callable handler function taking (expr, op) arguments
+        :raises KeyError: For unregistered custom operators
+        :raises RuntimeError: For unknown operators
+        """
+        # Core operator handlers
+        base_handlers = {
+            "!": lambda e: sympy.factorial(e),
+            "%": lambda e: e * 0.01,
+        }
+
+        # Custom operator resolution
+        if handler := base_handlers.get(op):
+            return handler
+        if self.id2type.get(op) == "POSTFIX_OP":
+            if op not in self.id2func:
+                raise KeyError(f"Postfix operator '{op}' not registered")
+            return lambda e: self.id2func[op](e)
+
+        raise RuntimeError(f"Unrecognized postfix operator: '{op}'")
 
     def convert_exp(self, exp):
         """
@@ -516,23 +562,43 @@ class TypstMathConverter(object):
         raise Exception(f"unknown matrix function {func_name}")
 
     def convert_subassign(self, subassign):
-        if subassign.atom():
-            return None, self.convert_atom(subassign.atom())
-        elif subassign.expr():
-            return None, self.convert_expr(subassign.expr())
-        elif subassign.relation():
-            # assert relation is `symbol = expr`
-            rel = self.convert_relation(subassign.relation())
+        """
+        Converts a subassignment node from the parser into a SymPy expression or equality components.
+
+        :param subassign: A parser node representing a subassignment (atom, expression, or relation).
+        :return: A tuple (lhs, rhs) where lhs is None or a Symbol, and rhs is a SymPy expression.
+        :raises AssertionError: If the converted relation is not a SymPy Equality.
+        """
+        if atom := subassign.atom():
+            return None, self.convert_atom(atom)
+
+        if expr := subassign.expr():
+            return None, self.convert_expr(expr)
+
+        if relation := subassign.relation():
+            rel = self.convert_relation(relation)
+            # NOTE: type analysis indicating unreachable???
             assert isinstance(rel, sympy.Equality)
             return rel.lhs, rel.rhs
 
     def convert_supassign(self, supassign):
-        if supassign.exp():
-            return None, self.convert_exp(supassign.exp())
-        elif supassign.expr():
-            return None, self.convert_expr(supassign.expr())
-        elif supassign.relation():
-            rel = self.convert_relation(supassign.relation())
+        """
+        Converts a supsassignment node from the parser into a SymPy expression or equality components,
+        enforcing the left-hand side to be a Symbol.
+
+        :param supsassign: A parser node representing a supsassignment (exp, expression, or relation).
+        :return: A tuple (lhs, rhs) where lhs is None or a Symbol, and rhs is a SymPy expression.
+        :raises AssertionError: If the relation is not a SymPy Equality or the lhs is not a Symbol.
+        """
+        if exp := supassign.exp():
+            return None, self.convert_exp(exp)
+
+        if expr := supassign.expr():
+            return None, self.convert_expr(expr)
+
+        if relation := supassign.relation():
+            rel = self.convert_relation(relation)
+            # NOTE: type analysis indicating unreachable???
             assert isinstance(rel, sympy.Equality)
             assert isinstance(rel.lhs, sympy.Symbol), (
                 f"lhs of {supassign.relation().getText()} is not a symbol"
@@ -543,18 +609,26 @@ class TypstMathConverter(object):
         symbol = None
         sub = None
         sup = None
-        # process sub
-        if subsupassign.subassign():
-            sym, sub = self.convert_subassign(subsupassign.subassign())
+        # WARNING: according to the static analyzer, this code is useless.
+        # because `self.convert_subassign` will always return either an error or None, some.
+        # And here we use only the first variable (None)
+        # NOTE: process sub
+        if subassign := subsupassign.subassign():
+            sym, sub = self.convert_subassign(subassign)
             if sym:
                 symbol = sym
-        # process sup
+
+        # WARNING: according to the static analyzer, this code is useless.
+        # because `self.convert_subassign` will always return either an error or None, some.
+        # And here we use only the first variable (None)
+        # NOTE: process sup
         if subsupassign.supexpr():
             sup = self.convert_supexpr(subsupassign.supexpr())
         elif subsupassign.supassign():
             sym, sup = self.convert_supassign(subsupassign.supassign())
             if sym:
                 symbol = sym
+
         return (symbol, sub, sup)
 
     def convert_reduceit(self, reduceit):
@@ -815,9 +889,9 @@ if __name__ == "__main__":
     assert typst == "(x y)^y^(z + 1)"
     print("PASS")
 
-    expr = convertor.sympy("mat(x + y, 2; z, 4)")
+    expr = convertor.sympy("mat(x + y, 2; z, 4 - 1)")
     typst = convertor.typst(sympy.simplify(expr))
-    assert typst == "mat(x + y, 2; z, 4)"
+    assert typst == "mat(x + y, 2; z, 3)"
     print("PASS")
 
     convertor.define_function("f_1")
